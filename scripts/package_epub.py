@@ -13,10 +13,10 @@ HTML_EXTS = {".xhtml", ".html", ".htm"}
 def package(book: Path, template: Path, output: Path) -> None:
     root = book / "epub_translated"
     if not root.is_dir():
-        raise SystemExit(f"missing reconstructed EPUB: {root}")
+        raise RuntimeError(f"missing reconstructed EPUB: {root}")
     css_path = template / "style.css"
     if not css_path.is_file():
-        raise SystemExit(f"missing template style: {css_path}")
+        raise RuntimeError(f"missing template style: {css_path}")
     work = book / "_packaged"
     if work.exists():
         shutil.rmtree(work)
@@ -39,8 +39,10 @@ def package(book: Path, template: Path, output: Path) -> None:
     if output.exists():
         output.unlink()
     mimetype = work / "mimetype"
+    if not mimetype.is_file():
+        raise RuntimeError(f"missing EPUB mimetype: {mimetype}")
     if mimetype.read_bytes() != b"application/epub+zip":
-        raise SystemExit("invalid EPUB mimetype")
+        raise RuntimeError("invalid EPUB mimetype")
     with zipfile.ZipFile(output, "w") as zf:
         zf.write(mimetype, "mimetype", compress_type=zipfile.ZIP_STORED)
         for path in sorted(work.rglob("*")):
