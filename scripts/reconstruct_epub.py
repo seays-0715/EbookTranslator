@@ -24,7 +24,7 @@ def parse_translation(path: Path) -> dict[str, str]:
         if line.startswith("[") and line.endswith("]"):
             if current is not None:
                 if current in result:
-                    raise SystemExit(f"duplicate translation id: {current}")
+                    raise RuntimeError(f"duplicate translation id: {current}")
                 result[current] = "\n".join(body).strip()
             current = line[1:-1]
             body = []
@@ -32,7 +32,7 @@ def parse_translation(path: Path) -> dict[str, str]:
             body.append(line)
     if current is not None:
         if current in result:
-            raise SystemExit(f"duplicate translation id: {current}")
+            raise RuntimeError(f"duplicate translation id: {current}")
         result[current] = "\n".join(body).strip()
     return result
 
@@ -44,10 +44,10 @@ def source_text(node: etree._Element) -> str:
 def image_target(href: str, source_xhtml: Path) -> str:
     clean = unquote(href.split("#", 1)[0])
     if not clean:
-        raise SystemExit(f"invalid image href: {href}")
+        raise RuntimeError(f"invalid image href: {href}")
     source_image = (source_xhtml.parent / clean).resolve()
     if not source_image.is_file():
-        raise SystemExit(f"missing image: {href}")
+        raise RuntimeError(f"missing image: {href}")
     return href
 
 
@@ -89,7 +89,7 @@ def locate_source_paragraph(root, paragraph, candidates):
         text = source_text(node)
         if not expected_hash or hashlib.sha256(text.encode("utf-8")).hexdigest() == expected_hash:
             return node
-    raise SystemExit(f"cannot locate source paragraph: {paragraph['id']}")
+    raise RuntimeError(f"cannot locate source paragraph: {paragraph['id']}")
 
 
 def source_paragraphs(file: dict, source: Path) -> dict[str, str]:
@@ -117,7 +117,7 @@ def has_text_descendants(node: etree._Element) -> bool:
 def replace_plain_text(node: etree._Element, translated: str) -> None:
     """Replace text in a simple container without destroying its own structure."""
     if has_text_descendants(node):
-        raise SystemExit(
+        raise RuntimeError(
             f"cannot safely replace nested inline markup in source paragraph: "
             f"{node.getroottree().getpath(node)}"
         )
@@ -141,7 +141,7 @@ def build_document(file, translations, source_root, output_root):
     expected_ids = [p["id"] for p in file["paragraphs"]]
     actual_ids = list(translations)
     if not set(actual_ids).issubset(set(expected_ids)):
-        raise SystemExit(f"unexpected translation IDs: {file['source']}")
+        raise RuntimeError(f"unexpected translation IDs: {file['source']}")
 
     missing = [pid for pid in expected_ids if pid not in translations]
     for item in file["content"]:
@@ -150,20 +150,20 @@ def build_document(file, translations, source_root, output_root):
             node = locate_source_paragraph(root, paragraph, candidates)
             translated = translations.get(item["id"], source_texts[item["id"]])
             if not translated:
-                raise SystemExit(f"empty source/translation: {item['id']}")
+                raise RuntimeError(f"empty source/translation: {item['id']}")
             replace_plain_text(node, translated)
         elif item["type"] == "image":
             href = image_target(item["href"], source)
             nodes = root.xpath(item.get("xpath", "")) if item.get("xpath") else []
             if len(nodes) != 1:
-                raise SystemExit(f"cannot locate source image: {item['href']}")
+                raise RuntimeError(f"cannot locate source image: {item['href']}")
             image = nodes[0]
             if etree.QName(image).localname.lower() != "img":
-                raise SystemExit(f"source image target is not img: {item['href']}")
+                raise RuntimeError(f"source image target is not img: {item['href']}")
             if not image.get("src") and not image.get("{http://www.w3.org/1999/xlink}href"):
                 image.set("src", href)
         else:
-            raise SystemExit(f"unknown content type: {item['type']}")
+            raise RuntimeError(f"unknown content type: {item['type']}")
 
     original.write(str(target), encoding="utf-8", xml_declaration=True, doctype="<!DOCTYPE html>")
     return len(missing) if translations else 0
@@ -187,7 +187,10 @@ def rebuild(book: Path, translating_root: Path) -> int:
 def main():
     if len(sys.argv) != 3:
         raise SystemExit("usage: reconstruct_epub.py <data-book> <translating-root>")
-    raise SystemExit(rebuild(Path(sys.argv[1]), Path(sys.argv[2])))
+    try:
+        raise SystemExit(rebuild(Path(sys.argv[1]), Path(sys.argv[2])))
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 if __name__ == "__main__":
