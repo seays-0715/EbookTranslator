@@ -97,10 +97,31 @@ def source_paragraphs(file: dict, source: Path) -> dict[str, str]:
     tree = etree.parse(str(source), parser)
     root = tree.getroot()
     candidates = eligible_paragraphs(root)
-    result = {}
+    result: dict[str, str] = {}
     for paragraph in file["paragraphs"]:
         result[paragraph["id"]] = source_text(locate_source_paragraph(root, paragraph, candidates))
     return result
+
+
+def has_text_descendants(node: etree._Element) -> bool:
+    for child in node.iterdescendants():
+        if not isinstance(child.tag, str):
+            continue
+        if child.text and child.text.strip():
+            return True
+        if child.tail and child.tail.strip():
+            return True
+    return False
+
+
+def replace_plain_text(node: etree._Element, translated: str) -> None:
+    """Replace the text of a simple container while preserving its own tag/attributes."""
+    if has_text_descendants(node):
+        raise SystemExit(
+            f"cannot safely replace nested inline markup in source paragraph: "
+            f"{node.getroottree().getpath(node)}"
+        )
+    node.text = translated
 
 
 def build_document(file, translations, source_root, output_root):
@@ -109,36 +130,38 @@ def build_document(file, translations, source_root, output_root):
     target.parent.mkdir(parents=True, exist_ok=True)
     parser = etree.XMLParser(resolve_entities=False, no_network=True, recover=False)
     original = etree.parse(str(source), parser)
-    original_root = original.getroot()
-    namespace = etree.QName(original_root).namespace or "http://www.w3.org/1999/xhtml"
+    root = original.getroot()
     source_texts = source_paragraphs(file, source)
-    html = etree.Element(f"{{{namespace}}}html", nsmap={None: namespace})
-    head = etree.SubElement(html, f"{{{namespace}}}head")
-    title_node = etree.SubElement(head, f"{{{namespace}}}title")
-    title_node.text = original.xpath("string(//*[local-name()='title'][1])") or file["source"]
-    body = etree.SubElement(html, f"{{{namespace}}}body")
+
     paragraphs = {p["id"]: p for p in file["paragraphs"]}
     expected_ids = [p["id"] for p in file["paragraphs"]]
     actual_ids = list(translations)
     if not set(actual_ids).issubset(set(expected_ids)):
         raise SystemExit(f"unexpected translation IDs: {file['source']}")
+
     missing = [pid for pid in expected_ids if pid not in translations]
     for item in file["content"]:
         if item["type"] == "paragraph":
             paragraph = paragraphs[item["id"]]
+            node = locate_source_paragraph(root, paragraph, eligible_paragraphs(root))
             translated = translations.get(item["id"], source_texts[item["id"]])
             if not translated:
                 raise SystemExit(f"empty source/translation: {item['id']}")
-            tag = paragraph.get("tag", "p") if paragraph.get("tag") in ELIGIBLE else "p"
-            node = etree.SubElement(body, f"{{{namespace}}}{tag}")
-            node.text = translated
+            replace_plain_text(node, translated)
         elif item["type"] == "image":
             href = image_target(item["href"], source)
-            node = etree.SubElement(body, f"{{{namespace}}}p", attrib={"class": "illustration"})
-            image = etree.SubElement(node, f"{{{namespace}}}img", attrib={"src": href, "alt": ""})
+            nodes = root.xpath(item.get("xpath", "")) if item.get("xpath") else []
+            if len(nodes) != 1:
+                raise SystemExit(f"cannot locate source image: {item['href']}")
+            image = nodes[0]
+            if etree.QName(image).localname.lower() != "img":
+                raise SystemExit(f"source image target is not img: {item['href']}")
+            if not image.get("src") and not image.get("{http://www.w3.org/1999/xlink}href"):
+                image.set("src", href)
         else:
             raise SystemExit(f"unknown content type: {item['type']}")
-    etree.ElementTree(html).write(str(target), encoding="utf-8", xml_declaration=True, doctype="<!DOCTYPE html>")
+
+    original.write(str(target), encoding="utf-8", xml_declaration=True, doctype="<!DOCTYPE html>")
     return len(missing) if translations else 0
 
 
