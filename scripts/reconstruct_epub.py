@@ -13,6 +13,8 @@ from lxml import etree
 
 ELIGIBLE = {"title", "p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "caption", "dt", "dd"}
 JP = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
+XHTML_NS = "http://www.w3.org/1999/xhtml"
+EPUB_NS = "http://www.idpf.org/2007/ops"
 
 
 def parse_translation(path: Path) -> dict[str, str]:
@@ -103,39 +105,39 @@ def source_paragraphs(file: dict, source: Path) -> dict[str, str]:
     return result
 
 
-def has_text_descendants(node: etree._Element) -> bool:
-    for child in node.iterdescendants():
-        if not isinstance(child.tag, str):
-            continue
-        if child.text and child.text.strip():
-            return True
-        if child.tail and child.tail.strip():
-            return True
-    return False
+def original_title(root: etree._Element) -> str:
+    nodes = root.xpath("//*[local-name()='head']/*[local-name()='title']")
+    return source_text(nodes[0]) if nodes else ""
 
 
-def replace_plain_text(node: etree._Element, translated: str) -> None:
-    """Replace text in a simple container without destroying its own structure."""
-    if has_text_descendants(node):
-        raise RuntimeError(
-            f"cannot safely replace nested inline markup in source paragraph: "
-            f"{node.getroottree().getpath(node)}"
-        )
-    node.text = translated
+def make_xhtml(title: str, content_nodes: list[etree._Element]) -> etree._ElementTree:
+    html = etree.Element(f"{{{XHTML_NS}}}html", nsmap={None: XHTML_NS, "epub": EPUB_NS})
+    html.set("{http://www.w3.org/XML/1998/namespace}lang", "zh-Hant")
+    html.set("class", "ebook")
+
+    head = etree.SubElement(html, f"{{{XHTML_NS}}}head")
+    meta = etree.SubElement(head, f"{{{XHTML_NS}}}meta")
+    meta.set("charset", "UTF-8")
+    title_node = etree.SubElement(head, f"{{{XHTML_NS}}}title")
+    title_node.text = title or "Ebook"
+
+    body = etree.SubElement(html, f"{{{XHTML_NS}}}body")
+    main = etree.SubElement(body, f"{{{XHTML_NS}}}div")
+    main.set("class", "main")
+    for node in content_nodes:
+        main.append(node)
+    return etree.ElementTree(html)
 
 
 def build_document(file, translations, source_root, output_root):
     source = source_root / file["source"]
     target = output_root / file["source"]
     target.parent.mkdir(parents=True, exist_ok=True)
+
     parser = etree.XMLParser(resolve_entities=False, no_network=True, recover=False)
     original = etree.parse(str(source), parser)
     root = original.getroot()
     candidates = eligible_paragraphs(root)
-    source_texts: dict[str, str] = {}
-    for paragraph in file["paragraphs"]:
-        node = locate_source_paragraph(root, paragraph, candidates)
-        source_texts[paragraph["id"]] = source_text(node)
 
     paragraphs = {p["id"]: p for p in file["paragraphs"]}
     expected_ids = [p["id"] for p in file["paragraphs"]]
@@ -144,28 +146,49 @@ def build_document(file, translations, source_root, output_root):
         raise RuntimeError(f"unexpected translation IDs: {file['source']}")
 
     missing = [pid for pid in expected_ids if pid not in translations]
+    source_texts: dict[str, str] = {}
+    for paragraph in file["paragraphs"]:
+        node = locate_source_paragraph(root, paragraph, candidates)
+        source_texts[paragraph["id"]] = source_text(node)
+
+    translated_by_id: dict[str, str] = {}
+    for paragraph in file["paragraphs"]:
+        pid = paragraph["id"]
+        translated_by_id[pid] = translations.get(pid, source_texts[pid])
+        if not translated_by_id[pid]:
+            raise RuntimeError(f"empty source/translation: {pid}")
+
+    title = original_title(root)
+    for paragraph in file["paragraphs"]:
+        if paragraph.get("tag") == "title":
+            title = translated_by_id[paragraph["id"]]
+            break
+
+    content_nodes: list[etree._Element] = []
     for item in file["content"]:
         if item["type"] == "paragraph":
             paragraph = paragraphs[item["id"]]
-            node = locate_source_paragraph(root, paragraph, candidates)
-            translated = translations.get(item["id"], source_texts[item["id"]])
-            if not translated:
-                raise RuntimeError(f"empty source/translation: {item['id']}")
-            replace_plain_text(node, translated)
+            tag = paragraph.get("tag", "p").lower()
+            if tag == "title":
+                continue
+            if tag not in ELIGIBLE - {"title"}:
+                tag = "p"
+            node = etree.Element(f"{{{XHTML_NS}}}{tag}")
+            node.text = translated_by_id[item["id"]]
+            content_nodes.append(node)
         elif item["type"] == "image":
             href = image_target(item["href"], source)
-            nodes = root.xpath(item.get("xpath", "")) if item.get("xpath") else []
-            if len(nodes) != 1:
-                raise RuntimeError(f"cannot locate source image: {item['href']}")
-            image = nodes[0]
-            if etree.QName(image).localname.lower() != "img":
-                raise RuntimeError(f"source image target is not img: {item['href']}")
-            if not image.get("src") and not image.get("{http://www.w3.org/1999/xlink}href"):
-                image.set("src", href)
+            wrapper = etree.Element(f"{{{XHTML_NS}}}div")
+            wrapper.set("class", "illustration")
+            image = etree.SubElement(wrapper, f"{{{XHTML_NS}}}img")
+            image.set("src", href)
+            image.set("alt", "")
+            content_nodes.append(wrapper)
         else:
             raise RuntimeError(f"unknown content type: {item['type']}")
 
-    original.write(str(target), encoding="utf-8", xml_declaration=True, doctype="<!DOCTYPE html>")
+    tree = make_xhtml(title, content_nodes)
+    tree.write(str(target), encoding="utf-8", xml_declaration=True, doctype="<!DOCTYPE html>", pretty_print=True)
     return len(missing) if translations else 0
 
 
@@ -188,9 +211,10 @@ def main():
     if len(sys.argv) != 3:
         raise SystemExit("usage: reconstruct_epub.py <data-book> <translating-root>")
     try:
-        raise SystemExit(rebuild(Path(sys.argv[1]), Path(sys.argv[2])))
+        result = rebuild(Path(sys.argv[1]), Path(sys.argv[2]))
     except RuntimeError as exc:
         raise SystemExit(str(exc)) from exc
+    raise SystemExit(0 if result >= 0 else 1)
 
 
 if __name__ == "__main__":
