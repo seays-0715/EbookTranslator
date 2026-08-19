@@ -6,19 +6,15 @@ Japanese EPUB → Traditional Chinese EPUB desktop translator.
 
 1. Select an EPUB.
 2. Extract stable-ID TXT files.
-3. Translate manually with any LLM, or use the built-in OpenAI-compatible API mode.
-4. Validate IDs, completeness, empty translations, and Japanese residue.
-5. Rebuild and package a compact EPUB.
+3. Translate the TXT files manually with your preferred AI or translation tool.
+4. Put the translated TXT files back into the translation folder.
+5. Validate the translation files.
+6. Rebuild and package a compact EPUB.
 
-## API mode
+## Manual translation
 
-The API translator uses an OpenAI-compatible `chat/completions` endpoint. The default endpoint is OpenAI's API, but `API Base URL` can be changed for compatible providers.
+The application does not require an API key or built-in AI translation service. Use ChatGPT, Claude, Gemini, Grok, or another translation tool of your choice, while preserving the program-generated paragraph IDs.
 
-- API key is entered at runtime and is not written to the repository or a config file.
-- Translation requests preserve program-generated paragraph IDs.
-- Large TXT files are split automatically at paragraph boundaries using the configured batch character limit.
-- API responses are rejected if IDs/order are wrong, a translation is empty, or Japanese residue remains.
+## Supported source languages
 
-## Manual mode
-
-The existing manual workflow remains available and does not require an API key.
+The main use case is Japanese → Traditional Chinese, but the extraction and rebuild pipeline is not limited to Japanese source EPUBs. The output is intended to be Traditional Chinese.
