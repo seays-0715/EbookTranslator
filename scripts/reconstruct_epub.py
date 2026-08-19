@@ -115,7 +115,7 @@ def has_text_descendants(node: etree._Element) -> bool:
 
 
 def replace_plain_text(node: etree._Element, translated: str) -> None:
-    """Replace the text of a simple container while preserving its own tag/attributes."""
+    """Replace text in a simple container without destroying its own structure."""
     if has_text_descendants(node):
         raise SystemExit(
             f"cannot safely replace nested inline markup in source paragraph: "
@@ -131,7 +131,11 @@ def build_document(file, translations, source_root, output_root):
     parser = etree.XMLParser(resolve_entities=False, no_network=True, recover=False)
     original = etree.parse(str(source), parser)
     root = original.getroot()
-    source_texts = source_paragraphs(file, source)
+    candidates = eligible_paragraphs(root)
+    source_texts: dict[str, str] = {}
+    for paragraph in file["paragraphs"]:
+        node = locate_source_paragraph(root, paragraph, candidates)
+        source_texts[paragraph["id"]] = source_text(node)
 
     paragraphs = {p["id"]: p for p in file["paragraphs"]}
     expected_ids = [p["id"] for p in file["paragraphs"]]
@@ -143,7 +147,7 @@ def build_document(file, translations, source_root, output_root):
     for item in file["content"]:
         if item["type"] == "paragraph":
             paragraph = paragraphs[item["id"]]
-            node = locate_source_paragraph(root, paragraph, eligible_paragraphs(root))
+            node = locate_source_paragraph(root, paragraph, candidates)
             translated = translations.get(item["id"], source_texts[item["id"]])
             if not translated:
                 raise SystemExit(f"empty source/translation: {item['id']}")
