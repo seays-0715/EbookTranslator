@@ -65,6 +65,16 @@ def has_eligible_ancestor(el: etree._Element) -> bool:
     return False
 
 
+def image_only_eligible_ancestor(el: etree._Element) -> bool:
+    parent = el.getparent()
+    while parent is not None:
+        if isinstance(parent.tag, str) and etree.QName(parent).localname.lower() in ELIGIBLE:
+            text_without_images = "".join(parent.itertext()).strip()
+            return not text_without_images
+        parent = parent.getparent()
+    return True
+
+
 def extract_file(raw: bytes, rel: str) -> tuple[list[dict], list[dict]]:
     parser = etree.XMLParser(resolve_entities=False, no_network=True, recover=False)
     root = etree.fromstring(raw, parser)
@@ -92,9 +102,9 @@ def extract_file(raw: bytes, rel: str) -> tuple[list[dict], list[dict]]:
                 paragraphs.append(paragraph)
                 content.append({"type": "paragraph", "id": paragraph["id"]})
                 continue
-        if local == "img" and not has_eligible_ancestor(el):
+        if local == "img":
             href = image_href(el)
-            if href:
+            if href and (not has_eligible_ancestor(el) or image_only_eligible_ancestor(el)):
                 content.append({"type": "image", "href": href, "xpath": paths[el]})
     return paragraphs, content
 
