@@ -5,6 +5,7 @@ This stage is deliberately language-neutral. Translation is not involved.
 """
 from __future__ import annotations
 
+import hashlib
 import html
 import re
 import shutil
@@ -49,6 +50,10 @@ def is_volume_title(title: str) -> bool:
 
 def text_from_element(el: etree._Element) -> str:
     return clean_text("".join(el.itertext()))
+
+
+def stable_id(title: str) -> str:
+    return hashlib.sha256(title.encode("utf-8")).hexdigest()[:24]
 
 
 def epub_spine_paths(root: Path) -> list[Path]:
@@ -190,6 +195,7 @@ def write_epub(volume: Volume, output: Path) -> None:
     (work / "META-INF").mkdir(parents=True)
     (work / "OEBPS").mkdir(parents=True)
     (work / "mimetype").write_bytes(b"application/epub+zip")
+    uid = f"urn:uuid:{stable_id(volume.title)}"
     (work / "META-INF" / "container.xml").write_text(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
         "<container version=\"1.0\" xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\">"
@@ -208,14 +214,14 @@ def write_epub(volume: Volume, output: Path) -> None:
     (work / "OEBPS" / "content.opf").write_text(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
         "<package xmlns=\"http://www.idpf.org/2007/opf\" version=\"2.0\" unique-identifier=\"bookid\">"
-        f"<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:identifier id=\"bookid\">standard-{abs(hash(volume.title))}</dc:identifier><dc:title>{html.escape(volume.title)}</dc:title><dc:language>und</dc:language></metadata>"
+        f"<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:identifier id=\"bookid\">{uid}</dc:identifier><dc:title>{html.escape(volume.title)}</dc:title><dc:language>und</dc:language></metadata>"
         f"<manifest>{''.join(manifest)}</manifest><spine toc=\"ncx\">{''.join(spine)}</spine></package>",
         encoding="utf-8",
     )
     (work / "OEBPS" / "toc.ncx").write_text(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
         "<ncx xmlns=\"http://www.daisy.org/z3986/2005/ncx/\" version=\"2005-1\">"
-        f"<head><meta name=\"dtb:uid\" content=\"standard-{abs(hash(volume.title))}\"/></head><docTitle><text>{html.escape(volume.title)}</text></docTitle><navMap>{''.join(nav_points)}</navMap></ncx>",
+        f"<head><meta name=\"dtb:uid\" content=\"{uid}\"/></head><docTitle><text>{html.escape(volume.title)}</text></docTitle><navMap>{''.join(nav_points)}</navMap></ncx>",
         encoding="utf-8",
     )
     output.parent.mkdir(parents=True, exist_ok=True)
