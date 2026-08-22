@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Extract EPUB resources and paragraph IDs for translation."""
+"""Extract EPUB resources and paragraph IDs for translation.
+
+The extraction stage is language-neutral. Language filtering belongs to the
+translation stage, not input normalization.
+"""
 from __future__ import annotations
 
 import hashlib
 import json
-import re
 import shutil
 import sys
 import tempfile
@@ -15,11 +18,6 @@ from lxml import etree
 
 ELIGIBLE = {"title", "p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "caption", "dt", "dd"}
 HTML_EXTS = {".xhtml", ".html", ".htm"}
-JP = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
-
-
-def has_japanese(text: str) -> bool:
-    return bool(JP.search(text))
 
 
 def source_text(el: etree._Element) -> str:
@@ -87,7 +85,7 @@ def extract_file(raw: bytes, rel: str) -> tuple[list[dict], list[dict]]:
         local = etree.QName(el).localname.lower()
         if local in ELIGIBLE and not has_eligible_ancestor(el):
             text = source_text(el)
-            if text and has_japanese(text):
+            if text:
                 index = len(paragraphs) + 1
                 paragraph = {
                     "id": paragraph_id(rel, index),
@@ -155,7 +153,7 @@ def extract(epub: Path, data_root: Path, book: str) -> None:
                 "content": content,
             })
             total += len(paragraphs)
-        manifest = {"version": 3, "book": book, "source_epub": epub.name, "paragraph_count": total, "files": files}
+        manifest = {"version": 4, "language_neutral": True, "book": book, "source_epub": epub.name, "paragraph_count": total, "files": files}
         (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
