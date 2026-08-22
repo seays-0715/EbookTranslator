@@ -1,37 +1,50 @@
 # EbookTranslator
 
-A two-stage ebook processing tool:
+Ebook processing is divided into two independent stages:
 
-1. **Input → Standard Ebook**: normalize source books into deterministic, chapter-based EPUB files.
-2. **Standard Ebook → Translation**: translation is a separate stage and is not part of input normalization.
+1. **Input → Standard Ebook** — parse arbitrary ebook sources into a canonical, language-neutral `Book` model and generate a fixed-format EPUB.
+2. **Standard Ebook → Translation** — a separate translation pipeline to be designed after the standardization stage is validated.
 
-The first stage is **language-neutral**. It must not assume Japanese, English, Chinese, or any other source language.
-
-## Standardization prototype
-
-The current prototype accepts:
-
-- `.txt`
-- `.epub`
-
-Run:
+## Canonical Book Model
 
 ```text
-python scripts/standardize_book.py <input.txt|input.epub> <output-dir>
+Book
+├── Metadata
+├── Volume 1
+│   ├── Chapter 1
+│   │   ├── Part 1
+│   │   └── Part 2
+│   └── Chapter 2
+└── Volume 2
+    └── ...
 ```
 
-The result is one or more standardized EPUB files. Each EPUB contains one XHTML document per detected chapter and uses a fixed, minimal EPUB structure and stylesheet.
+The canonical hierarchy is:
 
-If an input contains explicit volume markers such as `第1巻`, `第2巻`, `Vol. 1`, `Volume 2`, or `Book 3`, the prototype groups the chapters into separate volume EPUBs instead of treating the omnibus as one book.
+```text
+Book → Volume → Chapter → Part
+```
 
-A single input file therefore does not automatically mean a single output book.
+Every book has at least one volume. When a source has no explicit volumes, the parser creates `Volume 1`.
 
-## Language neutrality
+`Part` represents source fragments used to assemble one logical chapter. Parts are not independent TOC entries in the generated EPUB.
 
-Input parsing and standardization do not perform language detection or Japanese-only filtering. The same pipeline is intended to accept books in any language.
+See [`docs/BOOK_MODEL_SPEC.md`](docs/BOOK_MODEL_SPEC.md) for the complete specification.
 
-Language-specific rules belong to the later translation stage.
+## Standardization rules
 
-## Existing translation workflow
+- Input is language-neutral.
+- A physical input file is not assumed to equal one book, volume, or chapter.
+- Multiple source files may form one chapter.
+- Source filename patterns are signals, not authoritative structure.
+- Ambiguous structure must remain editable rather than silently losing content.
+- Original semantic content and images are preserved where available.
+- Original presentation CSS/layout is replaced by one standard generator and stylesheet.
+- Users can choose **Separate Volumes** or **Combined Edition** after structural analysis.
+- Combined editions preserve volume boundaries in the internal model and EPUB TOC.
 
-The existing translation components remain separate from the new standardization prototype. Translation will be redesigned after the standardization/volume-splitting behavior has been tested against real input books.
+## Current implementation state
+
+The canonical model and v1.0 specification are now established. The existing prototype parser is intentionally not treated as the final architecture; the next implementation step is to rebuild parsing and EPUB generation around the canonical model instead of adding more format-specific patches.
+
+Translation remains untouched until this standardization layer has been validated against real books, including omnibus editions and extracted EPUB directory structures.
